@@ -72,7 +72,7 @@ namespace Microsoft.Extensions.Primitives
                 {
                     if (ChangeTokens[i].HasChanged)
                     {
-                        OnChange(this);
+                        OnChange(new MyState(this, int.MaxValue));
                         return true;
                     }
                 }
@@ -106,7 +106,7 @@ namespace Microsoft.Extensions.Primitives
                 {
                     if (ChangeTokens[i].ActiveChangeCallbacks)
                     {
-                        IDisposable disposable = ChangeTokens[i].RegisterChangeCallback(_onChangeDelegate, this);
+                        IDisposable disposable = ChangeTokens[i].RegisterChangeCallback(_onChangeDelegate, new MyState(this, _disposables.Count));
                         if (_cancellationTokenSource.IsCancellationRequested)
                         {
                             disposable.Dispose();
@@ -123,33 +123,59 @@ namespace Microsoft.Extensions.Primitives
         {
             Debug.Assert(state != null);
 
-            var compositeChangeTokenState = (CompositeChangeToken)state;
+            var myState = (MyState)state;
+            var compositeChangeTokenState = myState.CompositeChangeToken;
+
             if (compositeChangeTokenState._cancellationTokenSource == null)
             {
                 return;
             }
 
+            bool returnEarly;
+
             lock (compositeChangeTokenState._callbackLock)
             {
-                if (compositeChangeTokenState._cancellationTokenSource.IsCancellationRequested)
-                {
-                    return;
-                }
+                returnEarly = compositeChangeTokenState._cancellationTokenSource.IsCancellationRequested;
 
-                try
+                if (!returnEarly)
                 {
-                    compositeChangeTokenState._cancellationTokenSource.Cancel();
-                }
-                catch
-                {
+                    try
+                    {
+                        compositeChangeTokenState._cancellationTokenSource.Cancel();
+                    }
+                    catch
+                    {
+                    }
                 }
             }
 
             List<IDisposable>? disposables = compositeChangeTokenState._disposables;
             Debug.Assert(disposables != null);
+
+            if (returnEarly)
+            {
+                if (myState.Index < disposables.Count)
+                {
+                    disposables[myState.Index].Dispose();
+                }
+                return;
+            }
+
             for (int i = 0; i < disposables.Count; i++)
             {
                 disposables[i].Dispose();
+            }
+        }
+
+        private sealed class MyState
+        {
+            public CompositeChangeToken CompositeChangeToken { get; }
+            public int Index { get; }
+
+            public MyState(CompositeChangeToken compositeChangeToken, int index)
+            {
+                CompositeChangeToken = compositeChangeToken;
+                Index = index;
             }
         }
     }
